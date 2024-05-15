@@ -1,0 +1,396 @@
+MODULE MainModule
+!The following code is used for Wendel Pena, Wyatt Johnson, and Zy Jarvis'
+!final capstone project for Mechatronics 2024.
+!
+!The program consists of grabbing and dropping multiple dog treats on a table
+!into a labler machine and then dropped into a finished box. A camera mounted
+!above the table will grab coordinates of the treats and send the data to the
+!robot through TCP/IP.
+!
+!Created On: April 22, 2024
+!Last Updated: April 22, 2024 by Wendel Pena
+
+TASK PERS tooldata gripper_tcp:=[TRUE,[[-1.69096,0.956819,228.029],[1,0,0,0]],[1,[1,1,1],[1,0,0,0],0,0,0]];
+!TASK PERS wobjdata wobjTable:=[FALSE,TRUE,"",[[-39.5672,-375.795,-4.19623],[0.000726404,-0.023465,-0.999722,0.00226995]],[[0,0,0],[1,0,0,0]]];
+
+!Constant points in program
+CONST robtarget pHome:=[[472.24,174.92,-121.28],[0.734337,-0.015543,-0.0039621,-0.678596],[-2,-1,1,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
+CONST robtarget pAboveLabler:=[[-425.60,717.40,-148.75],[0.0119362,-0.000560426,-0.000182561,-0.999929],[0,0,2,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
+CONST robtarget pDropTreat:=[[-425.74,717.47,-113.98],[0.0119681,-0.000584756,-0.000141,-0.999928],[0,0,2,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
+CONST robtarget pPickTreat:=[[-425.88,717.58,-85.78],[0.0119346,-0.000533574,-0.000202666,-0.999929],[0,0,2,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
+CONST robtarget pOrigin:=[[2.60,-0.94,-0.48],[0.710683,0.00678684,-0.00558187,0.703458],[-2,-1,-1,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
+CONST robtarget pShow:= [[-7.22,-278.05,-497.64],[0.000168534,-0.0112797,0.717207,-0.696769],[-2,-1,0,1],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
+!!CONST robtarget pBox:= ;
+
+!Delare GLOBAL variables here
+VAR string stReceived;     !for initializing Vision system
+VAR socketdev ComSocket;   !for initializing Vision system
+PERS num xPosOffs;         !stores x value for the treats
+PERS num yPosOffs;         !stores y value for the treats
+PERS bool errorBit := FALSE;         !global error checking bit
+CONST num zAboveTable := -147;  !How high above treat gripper should be before plunging down
+CONST num zGrabTable := 1.0;   !How low the gripper should go to grab the treats
+VAR num xpos := 0;
+VAR num ypos := 0;
+TASK PERS wobjdata wobj_table:=[FALSE,TRUE,"",[[-39.0627,-375.761,-4.55119],[0.00208382,-0.0224445,-0.999745,0.0013294]],[[0,0,0],[1,0,0,0]]];
+CONST robtarget pShow10:=[[15.48,-125.94,-513.27],[0.0117709,-0.0239201,0.726897,-0.686228],[-2,-1,1,1],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
+CONST robtarget pShow20:=[[15.48,-419.89,-513.26],[0.0117752,-0.0239156,0.726887,-0.68624],[-2,0,0,1],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
+CONST robtarget pHome10:=[[472.24,174.92,-121.29],[0.734351,-0.0155454,-0.0039554,-0.67858],[-2,-1,1,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
+
+!PERS num numAngle;        !use for getting angle of treat on table
+
+
+!variables to change in functions (acts like variable pointers. value is cleared when returning back to main() )
+!VAR num blockShape := 0; !1 for circle, 2 for rectangle
+!VAR num numBlocks := 0; !accepts only 1-4. 0 = exits
+!VAR num repeat := 0; !1 = Rerun program, 2 = end program
+    
+PROC main()
+    !FOR TESTING
+    !MoveJ , v1000, z50, gripper_tcp\WObj:=wobj_table;
+    !MoveJ , v1000, z50, gripper_tcp\WObj:=wobj_table;
+
+    !FOR TESTING ^^^py
+    ConnectToPC;    !connect to Pi. only need to do this once
+    
+    TPErase;
+    TPWrite "PRESS START BUTTON TO BEGIN PROCEDURE";
+    
+    startProcedure:     !LABEL: jump here after an error to start process again
+   WaitDI D652_10_DI5, 1;  !waits for pushbutton start to begin process
+   !waitTime(10);
+    MoveJ pHome, v3000, fine, gripper_tcp\WObj:=wobj_table;
+    openGripper;
+    
+    WHILE TRUE DO
+    
+    !move home
+
+        sendData;
+    
+        GetData;
+    
+        ParseNMove errorBit;    
+        
+        !error checks
+        IF errorBit = TRUE THEN
+            errorBit := FALSE;
+            TPErase;
+            TPWrite "PRESS START BUTTON TO JOG ROBOT HOME AND RESTART PROCEDURE";
+            GOTO startProcedure;
+        ENDIF
+        
+        labelTreat;
+
+        MoveJ pHome, v3000, fine, gripper_tcp\WObj:=wobj_table;
+        
+        openGripper;
+        waitTime(0.3);
+        
+        
+    !MoveJ pHome, v1000, z50, gripper_tcp\WObj:=wobjTable;  !Start at home out of the way of camera
+        
+    !WaitDI D652_10_DI5, 1;  !waits for pushbutton start to begin process
+     
+    !insert code to get treat x,y data from camera here
+    !GrabTreats;
+    
+    !MoveJ pHome, v1000, fine, gripper_tcp\WObj:=wobjTable;  !move to home to use camera to check if got treat
+    !insert code to use camera to check if gripper got a treat
+    !waitTime 1;
+    
+    
+
+    
+    !insert code to drop treat in box
+    
+
+    !Repeat until all treats are picked up.
+    !Once all treats picked up. Wait for user to press button to start
+    ENDWHILE
+    
+!    ERROR
+!        IF ERRNO = ERR_ROBLIMIT THEN
+!            errorBit := 1;
+!            SkipWarn;
+!            RETRY;
+!        ENDIF
+
+ENDPROC
+    
+!******************************************************************************
+!Opens the gripper
+!******************************************************************************
+PROC openGripper()
+    reset D652_10_DO13;
+    waitTime 0.1;
+    set D652_10_DO14;
+    waittime 0.1;
+ENDPROC
+
+!******************************************************************************
+!labels the treat
+!******************************************************************************
+PROC labelTreat()
+        MoveJ pAboveLabler, v3000, z10, gripper_tcp\WObj:=wobj_table;!move above labeler
+        
+        MoveL pDropTreat, v500, fine, gripper_tcp\WObj:=wobj_table;!move above labeler to where we drop treat
+        
+        waitTime(0.1);
+        
+        openGripper;
+        
+        waitTime(2.0);
+        
+        MoveL pPickTreat, v500, fine, gripper_tcp\WObj:=wobj_table;!move above labeler to where we drop treat
+
+        closeGripper;
+        
+        MoveL pAboveLabler, v500, z20, gripper_tcp\WObj:=wobj_table;!move above labeler
+        
+
+ENDPROC
+
+
+!******************************************************************************
+!Closes the gripper
+!******************************************************************************
+PROC closeGripper ()
+    set D652_10_DO13;
+    waitTime 0.1;
+    reset D652_10_DO14;
+    waittime 0.1;
+ENDPROC
+    
+
+!******************************************************************************
+!Creates a socket to connect to raspberry pi 5's server socket.
+!Need to only do this once to esstablish a connection
+!******************************************************************************
+PROC ConnectToPC()
+        SocketClose ComSocket;
+        SocketCreate ComSocket;
+        SocketConnect ComSocket, "192.168.125.100", 4050;  !probably have to adjust IP
+    
+ENDPROC
+
+PROC ParseNMove(INOUT bool errorBit)
+    var num found:=0;
+    var num length:=0;
+    var string tester:="";
+    var string inVal:="";
+    var num testVal:=0;
+    VAR num numLen:= 4; 
+    VAR num space:= 0; 
+    VAR num lineEnd:= 0; 
+    var bool bOK;
+    VAR jointtarget checkJoints;    !used to check joint angles
+    space := StrFind(stReceived, 1, " ");
+    tester:= StrPart(stReceived, 1, space-1);!strpart(string, start, length)
+    bOK:=StrToVal(tester,xpos);
+        
+    lineEnd := StrFind(stReceived, space, ";");
+    inVal := StrPart(stReceived, space+1, lineEnd-space-1);!leave a space() for a " " (space), therefore SYNTAX for input is a 9 char string ex. "X-POS 3245"
+    bOK:=StrToVal(inVal,ypos);
+    
+        
+        TPErase;    !where we see TP is an output written or read from robot terminal
+        
+        TPWrite tester;
+        TPWrite inVal;
+
+       
+    
+!        TEST tester
+        
+!        CASE "1234": 
+!                        TPWrite tester;
+!        CASE "X-POS":
+!                        xpos := testVal;
+!                        TPWrite "value in="\Num:=xpos;
+                        
+!                        WaitDI D652_10_DI5, 1;!just simulating for waiting
+!                        SocketSend ComSocket \Str:="Got X-POS$";!SYNTAX place '$' at the end of strings sent to PI for receive format
+!        CASE "Y-POS":
+!                        ypos := testVal;
+!                        TPWrite "value in="\Num:=xpos;
+                        
+!                        WaitDI D652_10_DI5, 1;!just simulating for waiting
+!                        SocketSend ComSocket \Str:="Got Y-POS$";
+!        ENDTEST
+
+        
+        checkJoints:=CalcJointT(Offs(pOrigin, xpos, ypos, zAboveTable), gripper_tcp\Wobj:=wobj_table);
+
+
+        
+        IF xpos <> 0 AND ypos <> 0 THEN
+            MoveJ Offs(pOrigin, xpos, ypos, zAboveTable), v3000, z20, gripper_tcp\WObj:=wobj_table;!move above treat
+            !WaitDI D652_10_DI5, 1;!just simulating for waiting
+!            openGripper;
+!            waitTime(0.3);
+            MoveJ Offs(pOrigin, xpos, ypos, zGrabTable), v1000, fine, gripper_tcp\WObj:=wobj_table;!move down to treat
+!            waitTime(0.2);
+            closeGripper;
+            waitTime(0.2);
+            MoveJ Offs(pOrigin, xpos, ypos, zAboveTable), v3000, z20, gripper_tcp\WObj:=wobj_table;!move above treat
+         
+            
+        ENDIF
+        
+        !for error checking
+        ERROR
+            errorBit := TRUE;
+            SkipWarn;
+            RETURN;
+            !SkipWarn;
+!            IF ERRNO = ERR_ROBLIMIT THEN
+!                errorBit := 1;
+!            ENDIF
+!            TPErase;
+!            TPWrite "ERROR DETECTED. PRESS START BUTTON TO JOG ROBOT HOME AND RESTART PROCEDURE";
+    
+ENDPROC
+
+
+  !******************************************************************************
+!receives data from raspberry pi 5
+!******************************************************************************  
+PROC GetData()
+    
+        SocketReceive ComSocket \Str:=stReceived;
+        !
+        TPWrite stReceived;
+ENDPROC
+
+
+PROC SendData()
+        SocketSend ComSocket\Str:="!OKAY$";
+        
+        !SocketSend ComSocket\Str:="hey, there";
+        !Length:=strlen(stReceived);
+        !found:=strmatch(stReceived,1,"User:");
+        !IF found = length+1 THEN
+            !TPErase;!where we see TP is an output written or read from robot terminal
+            !TPWrite "Vision Login Error (User Prompt)";
+            !Stop;
+        !ENDIF
+        
+        !Send the Username
+        !SocketSend ComSocket \Str:="Hello!";
+        !SocketReceive ComSocket \Str:=stReceived;
+        !IF stReceived <> "Password: " THEN
+            !TPErase;
+            !TPWrite "Vision Login Error (Password Prompt)";
+            !Stop;
+        !ENDIF
+        
+        ! Send Password
+        
+!        WaitDI D652_10_DI5, 1;!just simulating for waiting
+!        SocketSend ComSocket \Str:="!DISCONNECT$";
+!        WaitDI D652_10_DI5, 1;!just simulating for waiting
+!        SocketClose ComSocket;
+!        WaitDI D652_10_DI5, 1;!just simulating for waiting
+
+    !SocketReceive ComSocket \Str:=stReceived;
+   
+ ENDPROC
+
+ 
+!******************************************************************************
+!Executes grabbing the treats based on X,Y coords
+!Calls func GetTreatData() to keep receiving X,Y coords until there are no more
+!treats left on the table
+!******************************************************************************
+!PROC GrabTreats()
+ !   GetTreatData;
+  !! WHILE TRUE DO
+   !     !Grab treat from table
+   !     MoveJ Offs(pOrigin, xPosOffs, yPosOffs, zAboveTable), v1000, fine, gripper_tcp\WObj:=wobj_table;     !move above treat
+   !     openGripper;
+   !     MoveL Offs(pOrigin, xPosOffs, yPosOffs, zGrabTable), v20, fine, gripper_tcp\WObj:=wobj_table;     !move down to grab treat
+   !     closeGripper;
+    !    MoveJ Offs(pOrigin, xPosOffs, yPosOffs, zAboveTable), v1000, fine, gripper_tcp\WObj:=wobj_table;     !move above treat
+        
+        !Bring treat to labeler
+   !     MoveJ Offs(pLabler, 0, 0, zAboveLabler), v1000, fine, gripper_tcp\WObj:=wobj_table;    !Once confirmed treat grabbed, move to above labeler
+   !     MoveL pLabler, v50, fine, gripper_tcp\WObj:=wobj_table;    !Plunge to labeler
+   !     openGripper;    !drop treat in labeler    
+   !     MoveL Offs(pLabler, 0, 0, zAboveLabler), v1000, fine, gripper_tcp\WObj:=wobj_table;  !move above labeler
+   !     waitTime 2;     !wait for labeler to be done
+   !     !maybe insert a wait condition that waits for an output signal from labeler OR just use waitTime
+   !     MoveL pLabler, v50, fine, gripper_tcp\WObj:=wobj_table;    !Plunge to labeler
+   !     closeGripper;   !pick up treat in labeler
+   !     MoveL Offs(pLabler, 0, 0, zAboveLabler), v1000, fine, gripper_tcp\WObj:=wobj_table;  !move above labeler
+   !     
+   !    !Move to box
+    !    !MoveJ pBox, v1000, fine, gripper_tcp\WObj:=wobjTable;   !above box
+    !!    !openGripper;    !drop treat in box 
+     !   
+     !   !Reset to home
+     !  MoveJ pHome, v1000, z50, gripper_tcp\WObj:=wobj_table;
+        
+     !   GetTreatData; !get treat data again. If no more treats on table, exit 
+   ! ENDWHILE
+    
+    
+!ENDPROC
+
+
+!******************************************************************************
+!Receives X and Y data of a single treat from the raspberry pi 5.
+!Parses a string from the pi containing x and y data.
+!Stores data into global vars: xPosOffs and yPosOffs.
+!******************************************************************************
+ PROC GetTreatData()
+    VAR string strXData:="";	!string data of x coords from camera
+    VAR string strYData:="";	!string data of y coords from camera
+    VAR num NumCharacters:=5;	!number of characters to parse
+    VAR bool bOK;
+    VAR socketstatus status;
+
+	!global variables to hold x,y data
+    xPosOffs:=0;
+    yPosOffs:=0;
+
+!For safety to check if socket is connected
+    status := SocketGetStatus(ComSocket);
+    IF status <> SOCKET_CONNECTED THEN
+      TPErase;
+      TPWrite "Vision Sensor Not Connected";
+      Return;
+    ENDIF
+
+SocketSend ComSocket \Str:="receiveData";	!send command "receiveData" to pi. pi will look for this string
+SocketReceive ComSocket \Str:=stReceived;	!receive pi's reply
+!CheckStatus;
+
+    ! Parse the data string
+    strXData:= StrPart(stReceived, 1, NumCharacters);
+    strYData:= StrPart(stReceived, NumCharacters+1, NumCharacters);
+
+    !Convert String Data To Numerical Data
+    bOK:=StrToVal(strXData,xPosOffs);
+    bOK:=StrToVal(strXData,yPosOffs);
+
+
+    !SocketClose ComSocket;
+  ENDPROC
+
+  
+!******************************************************************************
+!
+!
+!******************************************************************************
+  PROC CheckStatus()
+    SocketReceive ComSocket \Str:=stReceived;
+    IF stReceived <> "1\0d\0a" THEN
+      TPErase;
+      TPWrite "Vision Error!";
+      Stop;
+    ENDIF
+  ENDPROC
+  
+  
+ENDMODULE
